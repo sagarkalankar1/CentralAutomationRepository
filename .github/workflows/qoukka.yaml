@@ -1,0 +1,17 @@
+name: List Directories
+
+on:
+  workflow_dispatch:
+
+jobs:
+  list-directories:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: List directories
+        run: |
+          echo "Listing directories:"
+          find . -type d
