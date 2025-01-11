@@ -1,0 +1,70 @@
+name: Create Jenkins Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_name:
+        description: "Project Name"
+        required: true
+      folder_name:
+        description: "Jenkins Folder Name"
+        required: true
+      market:
+        description: "Market (e.g., India)"
+        required: true
+      git_repo_name:
+        description: "GitHub Repository Name"
+        required: true
+      git_branch:
+        description: "GitHub Repository Branch"
+        required: true
+      slack_channel:
+        description: "Slack Channel"
+        required: true
+      report_files:
+        description: "Report Files (e.g., CreatorsAutomationTestReport.html)"
+        required: true
+      report_name:
+        description: "Report Name"
+        required: true
+      cucumber_report_title:
+        description: "Cucumber Report Title"
+        required: true
+
+jobs:
+  create-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Central Repository
+        uses: actions/checkout@v3
+        with:
+          repository: your-org/central-repo
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Process Templates
+        run: |
+          sed -e "s|\${PROJECT_NAME}|${{ inputs.project_name }}|g" \
+              -e "s|\${FOLDER_NAME}|${{ inputs.folder_name }}|g" \
+              -e "s|\${MARKET}|${{ inputs.market }}|g" \
+              -e "s|\${GIT_REPO_NAME}|${{ inputs.git_repo_name }}|g" \
+              -e "s|\${GIT_BRANCH}|${{ inputs.git_branch }}|g" \
+              -e "s|\${SLACK_CHANNEL}|${{ inputs.slack_channel }}|g" \
+              template.jenkinsfile > output.jenkinsfile
+
+          sed -e "s|\${PROJECT_NAME}|${{ inputs.project_name }}|g" \
+              template.jobdsl > output.jobdsl
+
+      - name: Push to Target Repository
+        uses: actions/checkout@v3
+        with:
+          repository: your-org/target-repo
+          token: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git add output.*
+          git commit -m "Add pipeline for ${{ inputs.project_name }}"
+          git push
+
+      - name: Trigger Jenkins Seed Job
+        run: |
+          curl -X POST "http://jenkins.example.com/job/seed-job/build" \
+               --user ${{ secrets.JENKINS_USER }}:${{ secrets.JENKINS_TOKEN }}
