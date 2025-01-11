@@ -1,0 +1,31 @@
+pipelineJob('${PROJECT_NAME}/${MARKET_NAME}/android/${PROJECT_NAME}_cron') {
+  definition {
+    cpsScm {
+      scm {
+        git {
+          remote {
+            url('https://github.com/AmwayCommon/amstack-corp-global-deployment-config.git')
+            credentials('Apse1AmcontrollerJenkinsGitHubEntAccessTokenASM')
+          }
+          branch('release')
+        }
+      }
+      scriptPath('jenkinsfiles/applications/${PROJECT_NAME}/${MARKET_NAME}/android/${PROJECT_NAME}_cron_job.jenkinsfile')
+    }
+  }
+  properties {
+    pipelineTriggers {
+      triggers {
+        cron {
+          spec("30 4 * * 1\n30 4 * * 2-5")
+        }
+      }
+    }
+  }
+  logRotator {
+    daysToKeep(10)
+    numToKeep(10)
+    artifactDaysToKeep(10)
+    artifactNumToKeep(10)
+  }
+}
