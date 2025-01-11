@@ -1,0 +1,144 @@
+/* 
+@author Ajitsre (Automated Bot)
+*/
+import groovy.json.JsonSlurperClassic
+def customBody
+pipeline {
+
+    agent {
+        kubernetes {
+            inheritFrom "creators-automation-builder"
+            defaultContainer "builder"
+        }
+    }
+
+    environment{
+        GIT_REPOSITORY = "https://github.com/AmwayCommon/${TESTING_REPO_NAME}.git"
+        GIT_BRANCH = "${TESTING_REPO_BRANCH}"
+        GIT_CREDENTIALS_ID = "Apse1AmcontrollerJenkinsGitHubEntAccessTokenASM"
+        SLACK_CHANNEL = "${SLACK_CHANNEL}"
+        S3_BUCKET_NAME = "amcontroller-apse1-prod01-mobile-artifact"
+    }
+
+    options {
+        disableConcurrentBuilds(abortPrevious: true)
+    }    
+
+    stages {
+        stage('Build Start Notification') {
+            steps {
+                script {
+                    sendNotifications notificationType: Constants.buidlStatusStarted, communicationChannel: Constants.COMM_CHANNEL_SLACK, recipientList: ["${slack_channel}"]
+                }
+            }
+        }
+
+        stage('Git Checkout') {
+            steps {
+                script {
+                    checkout([
+                      $class: 'GitSCM',
+                      branches: [[name: "${GIT_BRANCH}"]],
+                      extensions: [[$class: 'GitLFSPull'],[
+                        $class: 'CloneOption',
+                        shallow: true,
+                        depth:   1,
+                        timeout: 20,
+                        noTags: true,
+                        honorRefspec: true
+                      ]],
+                      userRemoteConfigs: [[
+                        url: "${GIT_REPOSITORY}",
+                        credentialsId: "${GIT_CREDENTIALS_ID}",
+                        refspec: '+refs/heads/main:refs/remotes/origin/main' // Set your custom refspec here
+                      ]]
+                    ])
+                }
+            }
+        }
+        
+        stage('Execute automation tests') {
+            steps {
+                withCredentials([string(credentialsId: 'Apse1AmcontrollerJenkinsMobileDevopsProdBrowserStackCredASM', variable: 'browserStackCredentialsJson')]) {
+                    script {
+                        def browserStackCredentials = new JsonSlurperClassic().parseText("$browserStackCredentialsJson")
+                        env.BROWSERSTACK_USER = browserStackCredentials['browserStackUser']
+                        env.BROWSERSTACK_ACCESSKEY = browserStackCredentials['browserStackAccessKey']
+                        sh"""
+                            function prop {
+                                grep "\${1}" indiaAutomation.properties|cut -d'=' -f2
+                            }
+                            if [ \$(prop 'creators.automation.mobile.android.fetchAPKFromS3') = "true" ]
+                            then
+                                OBJECT=\$(aws s3 ls ${S3_BUCKET_NAME}/Creators/android_mobile/Uat --recursive | sort | grep ".*creators-uat-debug\\.apk" | tail -n 1 | awk '{print \$4}')
+                                aws s3 cp s3://${S3_BUCKET_NAME}/\$OBJECT src/test/resources/Apps/Global/ANDROID/Amway.apk
+                            fi
+                            mvn clean install -Dtest=TestRunner -DmobileDevice=\$(prop '${PRROJECT_NAME}.automation.mobile.android.device') -DmobileEnv=\$(prop '${PRROJECT_NAME}.automation.mobile.android.env') -Dcucumber.filter.tags=\$(prop '${PRROJECT_NAME}.automation.mobile.android.cucumber.filter.tags') -Ddataproviderthreadcount=\$(prop '${PRROJECT_NAME}.automation.mobile.android.data.provider.thread.count') \
+                            -Dstage=\$(prop '${PRROJECT_NAME}.automation.mobile.android.stage')
+                        """
+                        
+                    }
+                }
+            }
+        }
+        
+        stage('Publish HTML reports') {
+            steps {
+                script {
+                    publishHTML (target : [
+                    reportDir: 'output/report/',
+                    reportFiles: '${REPORT_FILES}',
+                    reportName: '${REPORT_NAME}',
+                    keepAll: true])
+                }
+            }
+        }
+
+        stage('Publish Cucumber reports') {
+            steps {
+                script {
+                    cucumber reportTitle: '${CUCUMBER_REPORT_TITLE}', jsonReportDirectory: 'target/cucumber-reports/', fileIncludePattern: '**/*.json'
+                }
+            }
+        }
+        
+        stage('Send reports to slack') {
+            steps {
+                script {
+                    slackUploadFile channel: "${slack_channel}", filePath: "output/report/*.html"
+                }
+            }
+        }
+
+        stage('Create zip and upload to s3') {
+            steps {
+                script {
+                    sh'''
+                        zip -r report.zip output -x ".*" -x "__MACOSX"
+                    '''
+                    def uploadVars = [:]
+                    currentDate = getFormattedDate()
+                    destS3Path = "${TESTING_REPO_NAME}/${MARKET_NAME}/android-mobile/cron/${currentDate}/${currentBuild.number}/"
+                    uploadVars[Constants.sourcePathKey] = "report.zip"
+                    uploadVars[Constants.s3BucketNameKey] = S3_BUCKET_NAME
+                    uploadVars[Constants.destS3PathKey] = destS3Path
+                    uploadVars[Constants.extraArgsKey] = "--acl public-read"
+                    s3ObjectUrl = uploadArtifactToAwsS3(uploadVars)
+                    customBody = "Status: *BUILD_SUCCESS* \n Market: *${MARKET_NAME}* \n Job: ${env.JOB_NAME} \n Build: #[${env.BUILD_NUMBER}] \n ZIP: ${s3ObjectUrl} \n Check console output at ${env.BUILD_URL} to view the results."
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            script {
+                sendNotifications notificationType: Constants.buildStatusCustomNotification, communicationChannel: Constants.COMM_CHANNEL_SLACK, recipientList: ["${slack_channel}"], customeNotificationDetails: [CUSTOM_BODY: customBody, CUSTOM_NOTIFICATION_TYPE: Constants.buildStatusSuccess]
+            }
+        }
+
+        failure {
+            sendNotifications notificationType: Constants.buildStatusFailure, communicationChannel: Constants.COMM_CHANNEL_SLACK, recipientList: ["${slack_channel}"]
+        }
+    }
+}
