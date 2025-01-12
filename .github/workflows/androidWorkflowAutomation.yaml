@@ -1,0 +1,119 @@
+name: Android Pipeline Creation
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository_name:
+        description: "The repository name"
+        required: true
+        default: "your-repo-name"
+      branch_name:
+        description: "Branch to build"
+        required: true
+        default: "main"
+      java_version:
+        description: "Java version to use"
+        required: true
+        default: "11"
+      java_distribution:
+        description: "Java distribution (e.g., temurin, zulu)"
+        required: true
+        default: "temurin"
+      cache_branch:
+        description: "Branch to use for cache writes"
+        required: false
+        default: "cache-main"
+      lint_options:
+        description: "Arguments for linting"
+        required: false
+        default: ""
+      test_options:
+        description: "Arguments for testing"
+        required: false
+        default: ""
+      firebase_app_id:
+        description: "Firebase App ID"
+        required: false
+        default: ""
+      firebase_distribution_groups:
+        description: "Firebase Distribution Groups"
+        required: false
+        default: ""
+      apk_output_path:
+        description: "Path to output APK file"
+        required: true
+        default: "app/build/outputs/apk/debug/app-debug.apk"
+      aab_output_path:
+        description: "Path to output AAB file"
+        required: true
+        default: "app/build/outputs/bundle/release/app-release.aab"
+      apk_build_args:
+        description: "Build arguments for APK"
+        required: false
+        default: "--debug"
+      aab_build_args:
+        description: "Build arguments for AAB"
+        required: false
+        default: "--release"
+
+jobs:
+  build:
+    name: Build and Deploy Android App
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+        with:
+          repository: ${{ github.event.inputs.repository_name }}
+          ref: ${{ github.event.inputs.branch_name }}
+
+      - name: Set up JDK
+        uses: actions/setup-java@v3
+        with:
+          java-version: ${{ github.event.inputs.java_version }}
+          distribution: ${{ github.event.inputs.java_distribution }}
+
+      - name: Restore Gradle Cache
+        uses: actions/cache@v3
+        with:
+          path: ~/.gradle/caches
+          key: gradle-${{ github.event.inputs.cache_branch }}
+
+      - name: Run Lint
+        run: ./gradlew lint ${{ github.event.inputs.lint_options }}
+
+      - name: Run Tests
+        run: ./gradlew test ${{ github.event.inputs.test_options }}
+
+      - name: Build APK
+        run: ./gradlew assembleDebug ${{ github.event.inputs.apk_build_args }}
+        env:
+          APK_OUTPUT_PATH: ${{ github.event.inputs.apk_output_path }}
+
+      - name: Build AAB
+        run: ./gradlew bundleRelease ${{ github.event.inputs.aab_build_args }}
+        env:
+          AAB_OUTPUT_PATH: ${{ github.event.inputs.aab_output_path }}
+
+      - name: Upload APK to Firebase
+        if: ${{ github.event.inputs.firebase_app_id != '' }}
+        env:
+          FIREBASE_APP_ID: ${{ github.event.inputs.firebase_app_id }}
+          FIREBASE_DIST_GROUPS: ${{ github.event.inputs.firebase_distribution_groups }}
+        run: |
+          firebase appdistribution:distribute \
+            ${{ github.event.inputs.apk_output_path }} \
+            --app ${{ env.FIREBASE_APP_ID }} \
+            --groups ${{ env.FIREBASE_DIST_GROUPS }}
+
+      - name: Upload AAB to Firebase
+        if: ${{ github.event.inputs.firebase_app_id != '' }}
+        env:
+          FIREBASE_APP_ID: ${{ github.event.inputs.firebase_app_id }}
+          FIREBASE_DIST_GROUPS: ${{ github.event.inputs.firebase_distribution_groups }}
+        run: |
+          firebase appdistribution:distribute \
+            ${{ github.event.inputs.aab_output_path }} \
+            --app ${{ env.FIREBASE_APP_ID }} \
+            --groups ${{ env.FIREBASE_DIST_GROUPS }}
